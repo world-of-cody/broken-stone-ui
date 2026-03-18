@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import type { CSSProperties } from 'react';
 import { useDamageEngine } from '../hooks/useDamageEngine';
 import { useSessionState } from '../context/SessionState';
 
@@ -9,6 +10,7 @@ export const StoneCanvas = () => {
   const { handleHit, isAnimating } = useDamageEngine();
 
   const hpPercentage = useMemo(() => Math.round((stoneHP / stoneMaxHP) * 100), [stoneHP, stoneMaxHP]);
+  const sparkStyle = useMemo(() => ({ '--spark-color': equippedTool.spark } as CSSProperties), [equippedTool.spark]);
 
   return (
     <section className="stone-canvas" aria-label="Stone mining canvas">
@@ -21,6 +23,7 @@ export const StoneCanvas = () => {
       <button
         type="button"
         className={`stone-canvas__hitbox ${isAnimating ? 'stone-canvas__hitbox--hit' : ''}`}
+        style={sparkStyle}
         onPointerDown={handleHit}
         onKeyDown={(event) => {
           if (event.key === 'Enter' || event.key === ' ') {

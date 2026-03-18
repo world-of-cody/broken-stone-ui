@@ -4,14 +4,17 @@ import { render } from '../tests/test-utils';
 import { SessionStateProvider, SESSION_STORAGE_KEY, useSessionState } from './SessionState';
 
 const Consumer = () => {
-  const { state, hitStone, swapTool } = useSessionState();
+  const { state, hitStone, swapTool, purchaseItem } = useSessionState();
   return (
     <div>
       <p data-testid="hp">{state.stoneHP}</p>
       <p data-testid="ore">{state.resources.ore}</p>
-      <button onClick={() => hitStone(2)}>Hit</button>
-      <button onClick={() => swapTool('iron-pick')}>Swap</button>
       <p data-testid="tool">{state.equippedTool.id}</p>
+      <button onClick={() => hitStone(2)}>Hit</button>
+      <button onClick={() => hitStone(120)}>Break</button>
+      <button onClick={() => purchaseItem('iron-pick-upgrade')}>Buy Iron</button>
+      <button onClick={() => swapTool('iron-pick')}>Equip Iron</button>
+      <button onClick={() => swapTool('bronze-pick')}>Equip Bronze</button>
     </div>
   );
 };
@@ -29,6 +32,7 @@ describe('SessionStateProvider', () => {
         stoneHP: 42,
         resources: { ore: 10, shards: 2 },
         equippedTool: { id: 'iron-pick' },
+        ownedToolIds: ['bronze-pick', 'iron-pick'],
       })
     );
 
@@ -56,14 +60,21 @@ describe('SessionStateProvider', () => {
     expect(Number(getByTestId('ore').textContent)).toBeGreaterThan(0);
   });
 
-  it('swaps tools when requested', () => {
+  it('can purchase and swap tools when unlocked', () => {
     const { getByText, getByTestId } = render(
       <SessionStateProvider>
         <Consumer />
       </SessionStateProvider>
     );
 
-    fireEvent.click(getByText('Swap'));
+    fireEvent.click(getByText('Break'));
+    fireEvent.click(getByText('Buy Iron'));
+    expect(getByTestId('tool')).toHaveTextContent('iron-pick');
+
+    fireEvent.click(getByText('Equip Bronze'));
+    expect(getByTestId('tool')).toHaveTextContent('bronze-pick');
+
+    fireEvent.click(getByText('Equip Iron'));
     expect(getByTestId('tool')).toHaveTextContent('iron-pick');
   });
 });

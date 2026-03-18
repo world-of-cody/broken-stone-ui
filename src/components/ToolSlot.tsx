@@ -1,3 +1,4 @@
+import type { CSSProperties } from 'react';
 import { useSessionState } from '../context/SessionState';
 
 export const ToolSlot = () => {
@@ -7,9 +8,11 @@ export const ToolSlot = () => {
     swapTool,
   } = useSessionState();
 
+  const sparkStyle = { '--spark-color': equippedTool.spark } as CSSProperties;
+
   return (
     <section className="tool-slot" aria-label="Equipped tool">
-      <div className={`tool-slot__sprite tool-slot__sprite--${equippedTool.sprite}`} />
+      <div className={`tool-slot__sprite tool-slot__sprite--${equippedTool.sprite}`} style={sparkStyle} />
       <div className="tool-slot__meta">
         <p className="tool-slot__title">{equippedTool.name}</p>
         <p className="subtext">Damage: {equippedTool.damage}</p>

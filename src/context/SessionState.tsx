@@ -8,47 +8,55 @@ import {
   useState,
   type ReactNode,
 } from 'react';
+import { getToolById, TOOL_LIBRARY, type ToolDefinition } from '../data/tools';
+import {
+  applyPurchase,
+  canAffordItem,
+  computeDamageWithBoosters,
+  getShopItem,
+  isItemOwned,
+  type BoosterInstance,
+  type PurchaseResult,
+  unmetUnlockReasons,
+} from '../state/shopLogic';
 
-const STORAGE_KEY = 'broken-stone:session:v1';
+const STORAGE_KEY = 'broken-stone:session:v2';
 export const SESSION_STORAGE_KEY = STORAGE_KEY;
 
+export type Tool = ToolDefinition;
 
-export type Tool = {
-  id: string;
-  name: string;
-  damage: number;
-  sprite: 'bronze' | 'iron' | 'obsidian';
+type ResourceMap = {
+  ore: number;
+  shards: number;
 };
 
 export type SessionState = {
   stoneHP: number;
   stoneMaxHP: number;
-  resources: {
-    ore: number;
-    shards: number;
-  };
+  resources: ResourceMap;
   equippedTool: Tool;
+  ownedToolIds: Tool['id'][];
+  activeBoosters: BoosterInstance[];
 };
 
 type SessionContextValue = {
   state: SessionState;
   tools: Tool[];
   hitStone: (damage?: number) => void;
-  swapTool: (toolId: string) => void;
+  swapTool: (toolId: Tool['id']) => void;
+  purchaseItem: (itemId: string) => PurchaseResult;
   resetSession: () => void;
 };
 
-const TOOLS: Tool[] = [
-  { id: 'bronze-pick', name: 'Bronze Pickaxe', damage: 1, sprite: 'bronze' },
-  { id: 'iron-pick', name: 'Iron Pickaxe', damage: 2, sprite: 'iron' },
-  { id: 'obsidian-pick', name: 'Obsidian Pickaxe', damage: 4, sprite: 'obsidian' },
-];
+const defaultTool = TOOL_LIBRARY[0];
 
 const defaultState: SessionState = {
   stoneHP: 80,
   stoneMaxHP: 80,
   resources: { ore: 0, shards: 0 },
-  equippedTool: TOOLS[0],
+  equippedTool: defaultTool,
+  ownedToolIds: [defaultTool.id],
+  activeBoosters: [],
 };
 
 const SessionStateContext = createContext<SessionContextValue | null>(null);
@@ -124,12 +132,18 @@ const emitEvent = (name: string, detail: Record<string, unknown>) => {
   }
 };
 
+const sanitizeBoosters = (boosters: BoosterInstance[]) => boosters.filter((booster) => booster.expiresAt > Date.now());
+
 const hydrateState = (): SessionState => {
   if (typeof window === 'undefined') return defaultState;
   const stored = window.localStorage.getItem(STORAGE_KEY);
   if (!stored) return defaultState;
   try {
     const parsed = JSON.parse(stored) as Partial<SessionState>;
+    const equippedTool = getToolById(parsed?.equippedTool?.id ?? defaultTool.id);
+    const ownedToolIds = Array.from(new Set(parsed?.ownedToolIds?.length ? parsed.ownedToolIds : defaultState.ownedToolIds));
+    const activeBoosters = sanitizeBoosters(parsed?.activeBoosters ?? []);
+
     return {
       ...defaultState,
       ...parsed,
@@ -137,8 +151,9 @@ const hydrateState = (): SessionState => {
         ...defaultState.resources,
         ...parsed?.resources,
       },
-      equippedTool:
-        TOOLS.find((tool) => tool.id === parsed?.equippedTool?.id) ?? defaultState.equippedTool,
+      ownedToolIds,
+      activeBoosters,
+      equippedTool,
     };
   } catch (error) {
     console.warn('[broken-stone] Failed to hydrate session state', error);
@@ -167,10 +182,28 @@ export const SessionStateProvider = ({ children }: { children: ReactNode }) => {
     }
   }, [state]);
 
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const interval = window.setInterval(() => {
+      setState((previous) => {
+        const activeBoosters = sanitizeBoosters(previous.activeBoosters);
+        if (activeBoosters.length === previous.activeBoosters.length) {
+          return previous;
+        }
+        return {
+          ...previous,
+          activeBoosters,
+        };
+      });
+    }, 1000);
+    return () => window.clearInterval(interval);
+  }, []);
+
   const hitStone = useCallback((incomingDamage?: number) => {
     setState((previous) => {
-      const damage = incomingDamage ?? previous.equippedTool.damage;
-      const { nextState, hitDetail, resourceDetail } = computeHit(previous, damage);
+      const baseDamage = incomingDamage ?? previous.equippedTool.damage;
+      const boostedDamage = computeDamageWithBoosters(baseDamage, previous.activeBoosters);
+      const { nextState, hitDetail, resourceDetail } = computeHit(previous, boostedDamage);
       emitEvent('stone:hit', hitDetail);
       if (resourceDetail) {
         emitEvent('resource:changed', resourceDetail);
@@ -179,9 +212,12 @@ export const SessionStateProvider = ({ children }: { children: ReactNode }) => {
     });
   }, []);
 
-  const swapTool = useCallback((toolId: string) => {
+  const swapTool = useCallback((toolId: Tool['id']) => {
     setState((previous) => {
-      const nextTool = TOOLS.find((tool) => tool.id === toolId) ?? previous.equippedTool;
+      if (!previous.ownedToolIds.includes(toolId)) {
+        return previous;
+      }
+      const nextTool = getToolById(toolId);
       if (nextTool.id === previous.equippedTool.id) {
         return previous;
       }
@@ -192,13 +228,48 @@ export const SessionStateProvider = ({ children }: { children: ReactNode }) => {
     });
   }, []);
 
+  const purchaseItem = useCallback((itemId: string): PurchaseResult => {
+    const item = getShopItem(itemId);
+    if (!item) {
+      return { success: false, reason: 'LOCKED' };
+    }
+
+    let result: PurchaseResult = { success: false, reason: 'LOCKED' };
+
+    setState((previous) => {
+      if (item.type === 'tool' && isItemOwned(item, previous)) {
+        result = { success: false, reason: 'OWNED' };
+        return previous;
+      }
+
+      const lockedReasons = unmetUnlockReasons(item, previous);
+      if (lockedReasons.length) {
+        result = { success: false, reason: 'LOCKED' };
+        return previous;
+      }
+
+      if (!canAffordItem(item, previous)) {
+        result = { success: false, reason: 'INSUFFICIENT' };
+        return previous;
+      }
+
+      const nextState = applyPurchase(previous, item);
+      result = { success: true };
+      return nextState;
+    });
+
+    return result;
+  }, []);
+
   const resetSession = useCallback(() => {
     setState(defaultState);
   }, []);
 
+  const ownedTools = useMemo(() => state.ownedToolIds.map((toolId) => getToolById(toolId)), [state.ownedToolIds]);
+
   const value = useMemo<SessionContextValue>(
-    () => ({ state, tools: TOOLS, hitStone, swapTool, resetSession }),
-    [hitStone, resetSession, state, swapTool]
+    () => ({ state, tools: ownedTools, hitStone, swapTool, resetSession, purchaseItem }),
+    [hitStone, ownedTools, purchaseItem, resetSession, state, swapTool]
   );
 
   return <SessionStateContext.Provider value={value}>{children}</SessionStateContext.Provider>;
@@ -211,4 +282,3 @@ export const useSessionState = () => {
   }
   return context;
 };
-  
