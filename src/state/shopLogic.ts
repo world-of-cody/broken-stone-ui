@@ -1,4 +1,4 @@
-import { SHOP_ITEMS, type ShopItem, type UnlockCondition } from '../data/shopCatalog';
+import { SHOP_ITEMS, type ShopItem, type UnlockCondition, type BoosterShopItem } from '../data/shopCatalog';
 import { getToolById } from '../data/tools';
 import type { SessionState } from '../context/SessionState';
 
@@ -9,7 +9,7 @@ export type BoosterInstance = {
   startedAt: number;
   expiresAt: number;
   durationMs: number;
-  effect: ShopItem & { type: 'booster' }['effect'];
+  effect: BoosterShopItem['effect'];
 };
 
 export const getShopItem = (itemId: string) => SHOP_ITEMS.find((item) => item.id === itemId);
