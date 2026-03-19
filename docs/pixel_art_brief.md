@@ -20,7 +20,13 @@ Use this brief when designing UI scenes for the Broken Stone prototype. The goal
 - Stone sprites should be simple gradients with `image-rendering: pixelated`.
 - Tool cards use dashed borders and subtle gradients to mimic inventory slots.
 
+### Special node glow reference
+- **Basalt Core:** ambient amber glow (`#f97316 → transparent`), textured basalt gradient.
+- **Iron Vein:** cyan glow (`#0ea5e9 → transparent`) with colder highlights.
+- **Crystal Geode:** violet glow (`#a855f7 → #5b21b6`) plus particle sparks in `#f8fafc` / `#818cf8`.
+
 ## Interaction cues
 - Hit animations: nudge the stone down 1–2 px, add glow on success.
 - Tool swap button should visually indicate the active tool (filled background, brighter border).
 - Emit console logs for `stone:hit` and `resource:changed` events to help engineers hook in audio/particles later.
+- Crit window should surface a gold badge and short flash overlay when triggered.

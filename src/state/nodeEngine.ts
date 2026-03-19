@@ -1,13 +1,11 @@
 import type { NodeDefinition, NodeUnlockState, ResourceType } from '../data/nodes';
-import { NODE_DEFINITIONS } from '../data/nodes';
+import { BASE_NODE_ID, NODE_DEFINITIONS, getBaseNode } from '../data/nodes';
 
 export type ResourceDelta = Record<ResourceType, number>;
 
-const BASE_NODE_ID: NodeDefinition['id'] = 'basalt-core';
+const baseNode = getBaseNode();
 
-const baseNode = NODE_DEFINITIONS.find((node) => node.id === BASE_NODE_ID)!;
-
-const zeroDelta = (): ResourceDelta => ({ chips: 0, ingots: 0, shards: 0 });
+export const zeroResourceDelta = (): ResourceDelta => ({ chips: 0, ingots: 0, shards: 0 });
 
 const unlockedSpecialNodes = (state: NodeUnlockState) =>
   NODE_DEFINITIONS.filter((node) => node.id !== BASE_NODE_ID && node.unlocksWhen(state)).sort(
@@ -29,7 +27,7 @@ export const resolveNodeRewards = (
   { isCrit }: { isCrit: boolean },
   rng: () => number = Math.random
 ): ResourceDelta => {
-  const delta = zeroDelta();
+  const delta = zeroResourceDelta();
   node.rewards.forEach((reward) => {
     const roll = reward.chance != null ? rng() <= reward.chance : true;
     if (roll) {

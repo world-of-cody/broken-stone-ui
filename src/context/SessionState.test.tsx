@@ -8,7 +8,7 @@ const Consumer = () => {
   return (
     <div>
       <p data-testid="hp">{state.stoneHP}</p>
-      <p data-testid="ore">{state.resources.ore}</p>
+      <p data-testid="chips">{state.resources.chips}</p>
       <p data-testid="tool">{state.equippedTool.id}</p>
       <button onClick={() => hitStone(2)}>Hit</button>
       <button onClick={() => hitStone(120)}>Break</button>
@@ -30,7 +30,7 @@ describe('SessionStateProvider', () => {
       SESSION_STORAGE_KEY,
       JSON.stringify({
         stoneHP: 42,
-        resources: { ore: 10, shards: 2 },
+        resources: { chips: 10, shards: 2 },
         equippedTool: { id: 'iron-pick' },
         ownedToolIds: ['bronze-pick', 'iron-pick'],
       })
@@ -43,7 +43,7 @@ describe('SessionStateProvider', () => {
     );
 
     expect(getByTestId('hp')).toHaveTextContent('42');
-    expect(getByTestId('ore')).toHaveTextContent('10');
+    expect(getByTestId('chips')).toHaveTextContent('10');
     expect(getByTestId('tool')).toHaveTextContent('iron-pick');
   });
 
@@ -55,19 +55,28 @@ describe('SessionStateProvider', () => {
     );
 
     fireEvent.click(getByText('Hit'));
-
     expect(Number(getByTestId('hp').textContent)).toBeLessThan(80);
-    expect(Number(getByTestId('ore').textContent)).toBeGreaterThan(0);
+
+    fireEvent.click(getByText('Break'));
+    expect(Number(getByTestId('chips').textContent)).toBeGreaterThan(0);
   });
 
   it('can purchase and swap tools when unlocked', () => {
+    window.localStorage.setItem(
+      SESSION_STORAGE_KEY,
+      JSON.stringify({
+        resources: { chips: 200, shards: 5 },
+        equippedTool: { id: 'bronze-pick' },
+        ownedToolIds: ['bronze-pick'],
+      })
+    );
+
     const { getByText, getByTestId } = render(
       <SessionStateProvider>
         <Consumer />
       </SessionStateProvider>
     );
 
-    fireEvent.click(getByText('Break'));
     fireEvent.click(getByText('Buy Iron'));
     expect(getByTestId('tool')).toHaveTextContent('iron-pick');
 

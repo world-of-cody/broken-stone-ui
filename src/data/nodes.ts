@@ -29,11 +29,13 @@ export type NodeDefinition = {
   };
 };
 
+export const BASE_NODE_ID = 'basalt-core' as const;
+
 const always = () => true;
 
 export const NODE_DEFINITIONS: NodeDefinition[] = [
   {
-    id: 'basalt-core',
+    id: BASE_NODE_ID,
     label: 'Basalt Core',
     maxHP: 80,
     spawnChance: 1,
@@ -46,7 +48,7 @@ export const NODE_DEFINITIONS: NodeDefinition[] = [
     id: 'iron-vein',
     label: 'Iron Vein',
     maxHP: 120,
-    spawnChance: 0.35,
+    spawnChance: 0.3,
     unlocksWhen: (state) => state.ownedToolIds.includes('iron-pick'),
     rewards: [
       { resource: 'chips', amount: 4 },
@@ -71,3 +73,5 @@ export const NODE_DEFINITIONS: NodeDefinition[] = [
 ];
 
 export const getNodeById = (id: NodeDefinition['id']) => NODE_DEFINITIONS.find((node) => node.id === id) ?? NODE_DEFINITIONS[0];
+
+export const getBaseNode = () => getNodeById(BASE_NODE_ID);

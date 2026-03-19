@@ -1,3 +1,4 @@
+
 import {
   createContext,
   useCallback,
@@ -15,19 +16,40 @@ import {
   computeDamageWithBoosters,
   getShopItem,
   isItemOwned,
+  unmetUnlockReasons,
   type BoosterInstance,
   type PurchaseResult,
-  unmetUnlockReasons,
 } from '../state/shopLogic';
+import {
+  BASE_NODE_ID,
+  getNodeById,
+  type NodeDefinition,
+  type ResourceType,
+} from '../data/nodes';
+import {
+  isCritWindowActive,
+  pickNextNode,
+  resolveNodeRewards,
+  zeroResourceDelta,
+} from '../state/nodeEngine';
+import { updateResourceTotals } from '../state/resourceController';
 
 const STORAGE_KEY = 'broken-stone:session:v2';
 export const SESSION_STORAGE_KEY = STORAGE_KEY;
 
 export type Tool = ToolDefinition;
 
-type ResourceMap = {
-  ore: number;
-  shards: number;
+type ActiveNodeState = {
+  id: NodeDefinition['id'];
+  hp: number;
+};
+
+export type ResourceMap = Record<ResourceType, number>;
+
+type HitSnapshot = {
+  timestamp: number;
+  wasCrit: boolean;
+  nodeId: NodeDefinition['id'];
 };
 
 export type SessionState = {
@@ -37,6 +59,11 @@ export type SessionState = {
   equippedTool: Tool;
   ownedToolIds: Tool['id'][];
   activeBoosters: BoosterInstance[];
+  activeNode: ActiveNodeState;
+  unlocks: Record<string, boolean>;
+  lastHitAt: number | null;
+  lastCritAt: number | null;
+  lastHitResult: HitSnapshot | null;
 };
 
 type SessionContextValue = {
@@ -50,114 +77,91 @@ type SessionContextValue = {
 
 const defaultTool = TOOL_LIBRARY[0];
 
-const defaultState: SessionState = {
-  stoneHP: 80,
-  stoneMaxHP: 80,
-  resources: { ore: 0, shards: 0 },
-  equippedTool: defaultTool,
-  ownedToolIds: [defaultTool.id],
-  activeBoosters: [],
+const sanitizeResources = (resources?: Partial<ResourceMap & { ore?: number }>): ResourceMap => ({
+  chips: resources?.chips ?? resources?.ore ?? 0,
+  ingots: resources?.ingots ?? 0,
+  shards: resources?.shards ?? 0,
+});
+
+const buildActiveNode = (nodeId: NodeDefinition['id'] = BASE_NODE_ID, hp?: number): ActiveNodeState => {
+  const definition = getNodeById(nodeId);
+  const clampedHp = Math.min(hp ?? definition.maxHP, definition.maxHP);
+  return { id: definition.id, hp: clampedHp };
+};
+
+const buildDefaultState = (): SessionState => {
+  const nodeDefinition = getNodeById(BASE_NODE_ID);
+  const activeNode = buildActiveNode(BASE_NODE_ID, nodeDefinition.maxHP);
+  return {
+    stoneHP: nodeDefinition.maxHP,
+    stoneMaxHP: nodeDefinition.maxHP,
+    resources: { chips: 0, ingots: 0, shards: 0 },
+    equippedTool: defaultTool,
+    ownedToolIds: [defaultTool.id],
+    activeBoosters: [],
+    activeNode,
+    unlocks: {},
+    lastHitAt: null,
+    lastCritAt: null,
+    lastHitResult: null,
+  };
 };
 
 const SessionStateContext = createContext<SessionContextValue | null>(null);
 
-type HitComputation = {
-  nextState: SessionState;
-  hitDetail: {
-    damage: number;
-    previousHP: number;
-    nextHP: number;
-    toolId: string;
-  };
-  resourceDetail?: {
-    oreDelta: number;
-    shardsDelta: number;
-    totals: SessionState['resources'];
-  };
+const sanitizeBoosters = (boosters: BoosterInstance[]) => boosters.filter((booster) => booster.expiresAt > Date.now());
+
+const spawnNodeState = (state: Pick<SessionState, 'ownedToolIds' | 'unlocks'>, rng: () => number = Math.random): ActiveNodeState => {
+  const node = pickNextNode({ ownedToolIds: state.ownedToolIds, unlocks: state.unlocks }, rng);
+  const definition = getNodeById(node.id);
+  return { id: node.id, hp: definition.maxHP };
 };
 
-const computeHit = (state: SessionState, damage: number): HitComputation => {
-  const previousHP = state.stoneHP;
-  const rawHP = Math.max(0, previousHP - damage);
-  let oreDelta = damage;
-  let shardsDelta = 0;
-  let stoneHP = rawHP;
-  let resources = state.resources;
+const hydrateState = (): SessionState => {
+  if (typeof window === 'undefined') return buildDefaultState();
+  const stored = window.localStorage.getItem(STORAGE_KEY);
+  if (!stored) return buildDefaultState();
+  try {
+    const parsed = JSON.parse(stored) as Partial<SessionState> & { resources?: Record<string, number> };
+    const equippedTool = getToolById(parsed?.equippedTool?.id ?? defaultTool.id);
+    const ownedToolIds = Array.from(
+      new Set(parsed?.ownedToolIds?.length ? parsed.ownedToolIds : [defaultTool.id])
+    );
+    const activeBoosters = sanitizeBoosters(parsed?.activeBoosters ?? []);
+    const unlocks = parsed?.unlocks ?? {};
+    const resources = sanitizeResources(parsed?.resources);
+    const hydratedNode = parsed?.activeNode ?? buildActiveNode();
+    const nodeDefinition = getNodeById(hydratedNode.id);
+    const stoneMaxHP = nodeDefinition.maxHP;
+    const stoneHP = Math.min(parsed?.stoneHP ?? hydratedNode.hp ?? stoneMaxHP, stoneMaxHP);
+    const activeNode: ActiveNodeState = { id: nodeDefinition.id, hp: stoneHP };
 
-  if (rawHP === 0) {
-    stoneHP = state.stoneMaxHP;
-    oreDelta += 5;
-    shardsDelta = 1;
-    resources = {
-      ore: state.resources.ore + oreDelta,
-      shards: state.resources.shards + shardsDelta,
-    };
-  } else {
-    resources = {
-      ore: state.resources.ore + oreDelta,
-      shards: state.resources.shards,
-    };
+    return {
+      ...buildDefaultState(),
+      ...parsed,
+      stoneHP,
+      stoneMaxHP,
+      resources,
+      ownedToolIds,
+      activeBoosters,
+      equippedTool,
+      activeNode,
+      unlocks,
+      lastHitAt: parsed?.lastHitAt ?? null,
+      lastCritAt: parsed?.lastCritAt ?? null,
+      lastHitResult: null,
+    } satisfies SessionState;
+  } catch (error) {
+    console.warn('[broken-stone] Failed to hydrate session state', error);
+    return buildDefaultState();
   }
-
-  const nextState: SessionState = {
-    ...state,
-    stoneHP,
-    resources,
-  };
-
-  const hitDetail = {
-    damage,
-    previousHP,
-    nextHP: stoneHP,
-    toolId: state.equippedTool.id,
-  };
-
-  const resourceDetail = oreDelta || shardsDelta
-    ? {
-        oreDelta,
-        shardsDelta,
-        totals: resources,
-      }
-    : undefined;
-
-  return { nextState, hitDetail, resourceDetail };
 };
 
 const emitEvent = (name: string, detail: Record<string, unknown>) => {
   if (typeof window === 'undefined') return;
   window.dispatchEvent(new CustomEvent(name, { detail }));
   if (import.meta.env.DEV) {
-    // eslint-disable-next-line no-console
     console.debug(`[broken-stone] ${name}`, detail);
-  }
-};
-
-const sanitizeBoosters = (boosters: BoosterInstance[]) => boosters.filter((booster) => booster.expiresAt > Date.now());
-
-const hydrateState = (): SessionState => {
-  if (typeof window === 'undefined') return defaultState;
-  const stored = window.localStorage.getItem(STORAGE_KEY);
-  if (!stored) return defaultState;
-  try {
-    const parsed = JSON.parse(stored) as Partial<SessionState>;
-    const equippedTool = getToolById(parsed?.equippedTool?.id ?? defaultTool.id);
-    const ownedToolIds = Array.from(new Set(parsed?.ownedToolIds?.length ? parsed.ownedToolIds : defaultState.ownedToolIds));
-    const activeBoosters = sanitizeBoosters(parsed?.activeBoosters ?? []);
-
-    return {
-      ...defaultState,
-      ...parsed,
-      resources: {
-        ...defaultState.resources,
-        ...parsed?.resources,
-      },
-      ownedToolIds,
-      activeBoosters,
-      equippedTool,
-    };
-  } catch (error) {
-    console.warn('[broken-stone] Failed to hydrate session state', error);
-    return defaultState;
   }
 };
 
@@ -201,13 +205,72 @@ export const SessionStateProvider = ({ children }: { children: ReactNode }) => {
 
   const hitStone = useCallback((incomingDamage?: number) => {
     setState((previous) => {
+      const nodeDefinition = getNodeById(previous.activeNode.id);
+      const now = Date.now();
       const baseDamage = incomingDamage ?? previous.equippedTool.damage;
-      const boostedDamage = computeDamageWithBoosters(baseDamage, previous.activeBoosters);
-      const { nextState, hitDetail, resourceDetail } = computeHit(previous, boostedDamage);
-      emitEvent('stone:hit', hitDetail);
-      if (resourceDetail) {
-        emitEvent('resource:changed', resourceDetail);
+      const boostedDamage = Math.max(1, Math.round(computeDamageWithBoosters(baseDamage, previous.activeBoosters)));
+      const isCrit = isCritWindowActive(previous.lastHitAt, now, nodeDefinition.crit.windowMs);
+      const damage = Math.max(1, Math.round(boostedDamage * (isCrit ? nodeDefinition.crit.multiplier : 1)));
+      const remainingHP = Math.max(0, previous.activeNode.hp - damage);
+
+      let resources = previous.resources;
+      let resourceDelta = zeroResourceDelta();
+      let resourceUpdate: ReturnType<typeof updateResourceTotals> | null = null;
+      let nextNode = previous.activeNode;
+      let stoneMaxHP = previous.stoneMaxHP;
+      let respawned = false;
+
+      if (remainingHP === 0) {
+        resourceDelta = resolveNodeRewards(nodeDefinition, { isCrit });
+        resourceUpdate = updateResourceTotals(previous.resources, resourceDelta);
+        resources = resourceUpdate.totals;
+        nextNode = spawnNodeState(previous);
+        stoneMaxHP = getNodeById(nextNode.id).maxHP;
+        respawned = true;
       }
+
+      const unlockedResources = resourceUpdate?.unlockedResources ?? [];
+      unlockedResources.forEach((resource) => {
+        console.log(`[analytics] Resource unlocked: ${resource}`);
+      });
+
+      const nextActiveNode: ActiveNodeState = respawned ? nextNode : { ...nextNode, hp: remainingHP };
+      const nextStoneHP = respawned ? nextActiveNode.hp : remainingHP;
+
+      const nextState: SessionState = {
+        ...previous,
+        stoneHP: nextStoneHP,
+        stoneMaxHP,
+        resources,
+        activeNode: nextActiveNode,
+        lastHitAt: now,
+        lastCritAt: isCrit ? now : previous.lastCritAt,
+        lastHitResult: {
+          timestamp: now,
+          wasCrit: isCrit,
+          nodeId: nodeDefinition.id,
+        },
+      };
+
+      emitEvent('stone:hit', {
+        damage,
+        previousHP: previous.activeNode.hp,
+        nextHP: nextState.activeNode.hp,
+        toolId: previous.equippedTool.id,
+        nodeId: nodeDefinition.id,
+        wasCrit: isCrit,
+        respawned,
+      });
+
+      if (resourceUpdate?.changed) {
+        emitEvent('resource:changed', {
+          nodeId: nodeDefinition.id,
+          wasCrit: isCrit,
+          delta: resourceDelta,
+          totals: resources,
+        });
+      }
+
       return nextState;
     });
   }, []);
@@ -237,7 +300,7 @@ export const SessionStateProvider = ({ children }: { children: ReactNode }) => {
     let result: PurchaseResult = { success: false, reason: 'LOCKED' };
 
     setState((previous) => {
-      if (item.type === 'tool' && isItemOwned(item, previous)) {
+      if (isItemOwned(item, previous)) {
         result = { success: false, reason: 'OWNED' };
         return previous;
       }
@@ -262,7 +325,7 @@ export const SessionStateProvider = ({ children }: { children: ReactNode }) => {
   }, []);
 
   const resetSession = useCallback(() => {
-    setState(defaultState);
+    setState(buildDefaultState());
   }, []);
 
   const ownedTools = useMemo(() => state.ownedToolIds.map((toolId) => getToolById(toolId)), [state.ownedToolIds]);

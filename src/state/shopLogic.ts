@@ -1,4 +1,4 @@
-import { SHOP_ITEMS, type ShopItem, type UnlockCondition, type BoosterShopItem } from '../data/shopCatalog';
+import { SHOP_ITEMS, type ShopItem, type UnlockCondition, type BoosterShopItem, type ResourceKey } from '../data/shopCatalog';
 import { getToolById } from '../data/tools';
 import type { SessionState } from '../context/SessionState';
 
@@ -14,10 +14,18 @@ export type BoosterInstance = {
 
 export const getShopItem = (itemId: string) => SHOP_ITEMS.find((item) => item.id === itemId);
 
+const RESOURCE_LABELS: Record<ResourceKey, string> = {
+  chips: 'Chips',
+  ingots: 'Ingots',
+  shards: 'Crystals',
+};
+
+
+
 const labelForCondition = (condition: UnlockCondition) => {
   if (condition.label) return condition.label;
   if (condition.type === 'resource') {
-    const label = condition.resource === 'shards' ? 'Crystals' : 'Ore';
+    const label = RESOURCE_LABELS[condition.resource];
     return `Requires ${condition.amount} ${label}`;
   }
   return 'Requires previous upgrade';
@@ -41,8 +49,15 @@ export const unmetUnlockReasons = (item: ShopItem, state: SessionState) => {
 export const canAffordItem = (item: ShopItem, state: SessionState) =>
   item.cost.every((cost) => (state.resources[cost.resource] ?? 0) >= cost.amount);
 
-export const isItemOwned = (item: ShopItem, state: SessionState) =>
-  item.type === 'tool' ? state.ownedToolIds.includes(item.toolId) : false;
+export const isItemOwned = (item: ShopItem, state: SessionState) => {
+  if (item.type === 'tool') {
+    return state.ownedToolIds.includes(item.toolId);
+  }
+  if (item.type === 'unlock') {
+    return Boolean(state.unlocks?.[item.unlockKey]);
+  }
+  return false;
+};
 
 export const isBoosterActive = (item: ShopItem, state: SessionState) => {
   if (item.type !== 'booster') return false;
@@ -73,6 +88,17 @@ export const applyPurchase = (state: SessionState, item: ShopItem, timestamp = D
       resources: nextResources,
       ownedToolIds,
       equippedTool: tool,
+    };
+  }
+
+  if (item.type === 'unlock') {
+    return {
+      ...state,
+      resources: nextResources,
+      unlocks: {
+        ...state.unlocks,
+        [item.unlockKey]: true,
+      },
     };
   }
 

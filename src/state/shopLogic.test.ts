@@ -1,6 +1,7 @@
 import { describe, expect, it, beforeEach } from 'vitest';
 import { SHOP_ITEMS } from '../data/shopCatalog';
 import { getToolById } from '../data/tools';
+import { BASE_NODE_ID } from '../data/nodes';
 import type { SessionState } from '../context/SessionState';
 import {
   applyPurchase,
@@ -15,11 +16,16 @@ beforeEach(() => {
   baseState = {
     stoneHP: 80,
     stoneMaxHP: 80,
-    resources: { ore: 200, shards: 5 },
+    resources: { chips: 200, ingots: 0, shards: 5 },
     equippedTool: getToolById('bronze-pick'),
     ownedToolIds: ['bronze-pick'],
     activeBoosters: [],
-  };
+    activeNode: { id: BASE_NODE_ID, hp: 80 },
+    unlocks: {},
+    lastHitAt: null,
+    lastCritAt: null,
+    lastHitResult: null,
+  } as SessionState;
 });
 
 describe('shopLogic helpers', () => {
@@ -36,7 +42,7 @@ describe('shopLogic helpers', () => {
     const next = applyPurchase(baseState, iron);
     expect(next.ownedToolIds).toContain('iron-pick');
     expect(next.equippedTool.id).toBe('iron-pick');
-    expect(next.resources.ore).toBe(baseState.resources.ore - iron.cost[0]!.amount);
+    expect(next.resources.chips).toBe(baseState.resources.chips - iron.cost[0]!.amount);
   });
 
   it('activates booster purchases and updates damage computation', () => {
