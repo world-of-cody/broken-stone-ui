@@ -4,10 +4,6 @@
   "buildCommand": "npm run build",
   "installCommand": "npm ci",
   "outputDirectory": "dist",
-  "env": {
-    "NEXT_PUBLIC_API_BASE": "@next_public_api_base",
-    "NEXT_PUBLIC_ANALYTICS_KEY": "@next_public_analytics_key"
-  },
   "github": {
     "enabled": true,
     "productionBranch": "main"
